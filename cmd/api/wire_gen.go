@@ -8,7 +8,7 @@ package main
 
 import (
 	"github.com/bwmarrin/snowflake"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/wire"
 	"url_shortener/internal/config"
 	"url_shortener/internal/controller"

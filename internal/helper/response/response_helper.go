@@ -1,7 +1,7 @@
 package response
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // ApiResponse represents the standard standardized JSON API response structure.
@@ -13,7 +13,7 @@ type ApiResponse[T any] struct {
 }
 
 // SuccessResponse sends a standard JSON success response.
-func SuccessResponse(c *fiber.Ctx, statusCode int, data any, message ...string) error {
+func SuccessResponse(c fiber.Ctx, statusCode int, data any, message ...string) error {
 	msg := ""
 	if len(message) > 0 {
 		msg = message[0]
@@ -27,7 +27,7 @@ func SuccessResponse(c *fiber.Ctx, statusCode int, data any, message ...string) 
 }
 
 // ErrorResponse sends a standard JSON error response.
-func ErrorResponse(c *fiber.Ctx, statusCode int, message string, errors ...any) error {
+func ErrorResponse(c fiber.Ctx, statusCode int, message string, errors ...any) error {
 	var errDetails any
 	if len(errors) > 0 {
 		errDetails = errors[0]
@@ -39,4 +39,3 @@ func ErrorResponse(c *fiber.Ctx, statusCode int, message string, errors ...any) 
 		Errors:  errDetails,
 	})
 }
-

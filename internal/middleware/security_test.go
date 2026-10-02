@@ -6,14 +6,14 @@ import (
 	"testing"
 	"url_shortener/internal/middleware"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSecurityHeadersMiddleware(t *testing.T) {
 	app := fiber.New()
 	app.Use(middleware.NewSecurityHeadersMiddleware())
-	app.Get("/test", func(c *fiber.Ctx) error {
+	app.Get("/test", func(c fiber.Ctx) error {
 		return c.SendString("ok")
 	})
 

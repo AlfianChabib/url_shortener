@@ -5,13 +5,13 @@ import (
 	"url_shortener/pkg/errs"
 	"url_shortener/pkg/validator"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
-// ReadRequestBody parses the JSON body into target struct and validates it.
-func ReadRequestBody(c *fiber.Ctx, target interface{}, customVal *validator.CustomValidator) error {
-	if err := c.BodyParser(target); err != nil {
-		return errs.NewBadRequestError(fmt.Sprintf("Invalid JSON request body: %v", err))
+// ReadRequestBody parses the request body into target struct and validates it.
+func ReadRequestBody(c fiber.Ctx, target interface{}, customVal *validator.CustomValidator) error {
+	if err := c.Bind().Body(target); err != nil {
+		return errs.NewBadRequestError(fmt.Sprintf("Invalid request body: %v", err))
 	}
 
 	if customVal != nil {
@@ -22,4 +22,3 @@ func ReadRequestBody(c *fiber.Ctx, target interface{}, customVal *validator.Cust
 
 	return nil
 }
-

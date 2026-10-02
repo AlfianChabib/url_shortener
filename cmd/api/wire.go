@@ -15,7 +15,7 @@ import (
 	"url_shortener/pkg/validator"
 
 	"github.com/bwmarrin/snowflake"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/wire"
 )
 
@@ -59,4 +59,3 @@ func InitializeServer() (*fiber.App, func(), error) {
 	wire.Build(serverSet)
 	return nil, nil, nil
 }
-

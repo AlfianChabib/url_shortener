@@ -9,14 +9,14 @@ import (
 	"url_shortener/pkg/errs"
 	"url_shortener/pkg/validator"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // LinkController handles link creation, redirection, and analytics.
 type LinkController interface {
-	Create(c *fiber.Ctx) error
-	Redirect(c *fiber.Ctx) error
-	GetAnalytics(c *fiber.Ctx) error
+	Create(c fiber.Ctx) error
+	Redirect(c fiber.Ctx) error
+	GetAnalytics(c fiber.Ctx) error
 }
 
 type linkControllerImpl struct {
@@ -33,7 +33,7 @@ func NewLinkController(service service.LinkService, val *validator.CustomValidat
 }
 
 // Create handles POST /api/v1/links
-func (ctrl *linkControllerImpl) Create(c *fiber.Ctx) error {
+func (ctrl *linkControllerImpl) Create(c fiber.Ctx) error {
 	var req web.CreateLinkRequest
 	if err := request.ReadRequestBody(c, &req, ctrl.validator); err != nil {
 		return err
@@ -48,7 +48,7 @@ func (ctrl *linkControllerImpl) Create(c *fiber.Ctx) error {
 }
 
 // Redirect handles GET /{short_code}
-func (ctrl *linkControllerImpl) Redirect(c *fiber.Ctx) error {
+func (ctrl *linkControllerImpl) Redirect(c fiber.Ctx) error {
 	shortCode := c.Params("short_code")
 	if shortCode == "" {
 		return errs.NewBadRequestError("short code is required")
@@ -61,11 +61,11 @@ func (ctrl *linkControllerImpl) Redirect(c *fiber.Ctx) error {
 
 	// PRD Section 3.2: Use HTTP 307 Temporary Redirect to prevent client-side permanent caching
 	c.Set("Cache-Control", "private, max-age=60")
-	return c.Redirect(originalURL, http.StatusTemporaryRedirect)
+	return c.Redirect().Status(http.StatusTemporaryRedirect).To(originalURL)
 }
 
 // GetAnalytics handles GET /api/v1/links/:short_code/analytics
-func (ctrl *linkControllerImpl) GetAnalytics(c *fiber.Ctx) error {
+func (ctrl *linkControllerImpl) GetAnalytics(c fiber.Ctx) error {
 	shortCode := c.Params("short_code")
 	if shortCode == "" {
 		return errs.NewBadRequestError("short code is required")
@@ -78,4 +78,3 @@ func (ctrl *linkControllerImpl) GetAnalytics(c *fiber.Ctx) error {
 
 	return response.SuccessResponse(c, http.StatusOK, res)
 }
-

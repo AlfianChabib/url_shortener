@@ -17,7 +17,7 @@ import (
 	"url_shortener/pkg/utils"
 	"url_shortener/pkg/validator"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -52,7 +52,7 @@ func TestHealthCheck(t *testing.T) {
 	app := setupTestApp()
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	resp, err := app.Test(req, -1)
+	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -74,7 +74,7 @@ func TestCreateShortLinkAndRedirect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/links", bytes.NewReader(payloadBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := app.Test(req, -1)
+	resp, err := app.Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
@@ -91,7 +91,7 @@ func TestCreateShortLinkAndRedirect(t *testing.T) {
 
 	// 2. Redirect
 	redirectReq := httptest.NewRequest(http.MethodGet, "/my-custom-test-link", nil)
-	redirectResp, err := app.Test(redirectReq, -1)
+	redirectResp, err := app.Test(redirectReq)
 
 	assert.NoError(t, err)
 	// PRD requires HTTP 307 Temporary Redirect
@@ -100,7 +100,7 @@ func TestCreateShortLinkAndRedirect(t *testing.T) {
 
 	// 3. Analytics
 	analyticsReq := httptest.NewRequest(http.MethodGet, "/api/v1/links/my-custom-test-link/analytics", nil)
-	analyticsResp, err := app.Test(analyticsReq, -1)
+	analyticsResp, err := app.Test(analyticsReq)
 
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, analyticsResp.StatusCode)
@@ -121,7 +121,7 @@ func TestCreateShortLinkValidation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/links", bytes.NewReader(payloadBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := app.Test(req, -1)
+	resp, err := app.Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
@@ -130,9 +130,8 @@ func TestRedirectNotFound(t *testing.T) {
 	app := setupTestApp()
 
 	req := httptest.NewRequest(http.MethodGet, "/non-existent-code-12345", nil)
-	resp, err := app.Test(req, -1)
+	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
-

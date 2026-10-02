@@ -8,11 +8,11 @@ import (
 	"url_shortener/pkg/validator"
 
 	val "github.com/go-playground/validator/v10"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // ErrorHandler provides a centralized error handling mechanism for Fiber.
-func ErrorHandler(c *fiber.Ctx, err error) error {
+func ErrorHandler(c fiber.Ctx, err error) error {
 	// Case 1: Custom AppError
 	var appErr *errs.AppError
 	if errors.As(err, &appErr) {
@@ -35,4 +35,3 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 	// Case 4: Default 500 Internal Server Error
 	return response.ErrorResponse(c, http.StatusInternalServerError, "Internal Server Error", err.Error())
 }
-

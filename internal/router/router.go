@@ -4,7 +4,7 @@ import (
 	"url_shortener/internal/controller"
 	"url_shortener/internal/middleware"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // SetupRouter registers all application routes and middlewares to the Fiber app.
@@ -33,4 +33,3 @@ func SetupRouter(
 	// High-Throughput Redirection Route
 	app.Get("/:short_code", linkController.Redirect)
 }
-
