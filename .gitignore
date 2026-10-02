@@ -1,0 +1,29 @@
+# Binaries
+bin/*
+!bin/.gitkeep
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build cache, and temporary files
+*.test
+*.out
+tmp/
+
+# Dependency directories
+vendor/
+
+# Environment variables
+.env
+!.env.example
+
+# IDE & OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
