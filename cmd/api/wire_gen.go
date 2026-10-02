@@ -29,7 +29,7 @@ func InitializeServer() (*fiber.App, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	pool, cleanup, err := database.NewPostgresPool(config)
+	db, cleanup, err := database.NewGormDB(config)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -38,7 +38,7 @@ func InitializeServer() (*fiber.App, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	linkRepository := repository.NewLinkRepository(pool, client)
+	linkRepository := repository.NewLinkRepository(db, client)
 	node, err := provideSnowflakeNode(config)
 	if err != nil {
 		cleanup2()
@@ -80,5 +80,5 @@ func provideFiberApp(
 }
 
 var serverSet = wire.NewSet(
-	provideConfig, database.NewPostgresPool, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, service.NewLinkService, controller.NewLinkController, controller.NewHealthController, provideFiberApp,
+	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, service.NewLinkService, controller.NewLinkController, controller.NewHealthController, provideFiberApp,
 )

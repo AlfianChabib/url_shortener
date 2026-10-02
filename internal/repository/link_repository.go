@@ -9,9 +9,8 @@ import (
 	"url_shortener/internal/model/domain"
 	"url_shortener/pkg/errs"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 // LinkRepository defines data access methods for URL links and analytics.
@@ -25,7 +24,7 @@ type LinkRepository interface {
 }
 
 type linkRepositoryImpl struct {
-	pool  *pgxpool.Pool
+	db    *gorm.DB
 	redis *redis.Client
 
 	// In-memory fallback stores for local testing/graceful degradation
@@ -35,10 +34,10 @@ type linkRepositoryImpl struct {
 	memCache  map[string]string
 }
 
-// NewLinkRepository creates a new LinkRepository instance.
-func NewLinkRepository(pool *pgxpool.Pool, redisClient *redis.Client) LinkRepository {
+// NewLinkRepository creates a new LinkRepository instance using GORM and Redis.
+func NewLinkRepository(db *gorm.DB, redisClient *redis.Client) LinkRepository {
 	return &linkRepositoryImpl{
-		pool:      pool,
+		db:        db,
 		redis:     redisClient,
 		memLinks:  make(map[string]*domain.Link),
 		memClicks: make(map[string]int64),
@@ -47,21 +46,11 @@ func NewLinkRepository(pool *pgxpool.Pool, redisClient *redis.Client) LinkReposi
 }
 
 func (r *linkRepositoryImpl) Create(ctx context.Context, link *domain.Link) error {
-	if r.pool != nil {
-		query := `
-			INSERT INTO links (id, short_code, original_url, user_id, is_active, created_at, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`
-		_, err := r.pool.Exec(ctx, query,
-			link.ID,
-			link.ShortCode,
-			link.OriginalURL,
-			link.UserID,
-			link.IsActive,
-			link.CreatedAt,
-			link.ExpiresAt,
-		)
-		if err != nil {
+	if r.db != nil {
+		if err := r.db.WithContext(ctx).Create(link).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return errs.NewConflictError("short code already exists", err)
+			}
 			return fmt.Errorf("failed to insert link: %w", err)
 		}
 		return nil
@@ -80,24 +69,13 @@ func (r *linkRepositoryImpl) Create(ctx context.Context, link *domain.Link) erro
 }
 
 func (r *linkRepositoryImpl) FindByShortCode(ctx context.Context, shortCode string) (*domain.Link, error) {
-	if r.pool != nil {
-		query := `
-			SELECT id, short_code, original_url, user_id, is_active, created_at, expires_at
-			FROM links
-			WHERE short_code = $1 AND is_active = true
-		`
+	if r.db != nil {
 		var link domain.Link
-		err := r.pool.QueryRow(ctx, query, shortCode).Scan(
-			&link.ID,
-			&link.ShortCode,
-			&link.OriginalURL,
-			&link.UserID,
-			&link.IsActive,
-			&link.CreatedAt,
-			&link.ExpiresAt,
-		)
+		err := r.db.WithContext(ctx).
+			Where("short_code = ? AND is_active = ?", shortCode, true).
+			First(&link).Error
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NewNotFoundError("link not found")
 			}
 			return nil, fmt.Errorf("failed to query link: %w", err)
@@ -180,4 +158,3 @@ func (r *linkRepositoryImpl) GetClickCount(ctx context.Context, shortCode string
 	defer r.mu.RUnlock()
 	return r.memClicks[shortCode], nil
 }
-

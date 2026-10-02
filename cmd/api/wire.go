@@ -43,7 +43,7 @@ func provideFiberApp(
 
 var serverSet = wire.NewSet(
 	provideConfig,
-	database.NewPostgresPool,
+	database.NewGormDB,
 	database.NewRedisClient,
 	provideSnowflakeNode,
 	validator.NewValidator,

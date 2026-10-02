@@ -1,61 +1,64 @@
 package database
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
 	"url_shortener/internal/config"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-// NewPostgresPool initializes and returns a PostgreSQL connection pool using pgxpool.
-func NewPostgresPool(cfg *config.Config) (*pgxpool.Pool, func(), error) {
+// NewGormDB initializes and returns a GORM DB instance configured for PostgreSQL.
+func NewGormDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=UTC",
+		cfg.Database.Host,
 		cfg.Database.User,
 		cfg.Database.Password,
-		cfg.Database.Host,
-		cfg.Database.Port,
 		cfg.Database.Name,
+		cfg.Database.Port,
 		cfg.Database.SSLMode,
 	)
 
-	poolConfig, err := pgxpool.ParseConfig(dsn)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse postgres config: %w", err)
-	}
-
-	poolConfig.MaxConns = int32(cfg.Database.MaxConns)
-	poolConfig.MinConns = int32(cfg.Database.MinConns)
-	poolConfig.MaxConnLifetime = 1 * time.Hour
-	poolConfig.MaxConnIdleTime = 15 * time.Minute
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		log.Printf("[WARN] Failed to connect to PostgreSQL: %v (running in disconnected mode)", err)
+		log.Printf("[WARN] Failed to connect to PostgreSQL via GORM: %v (running in disconnected mode)", err)
 		return nil, func() {}, nil
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		log.Printf("[WARN] PostgreSQL ping failed: %v (running in disconnected mode)", err)
-		pool.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("[WARN] Failed to get generic database object from GORM: %v", err)
 		return nil, func() {}, nil
 	}
 
-	log.Println("[INFO] Successfully connected to PostgreSQL")
+	if err := sqlDB.Ping(); err != nil {
+		log.Printf("[WARN] PostgreSQL ping failed via GORM: %v (running in disconnected mode)", err)
+		sqlDB.Close()
+		return nil, func() {}, nil
+	}
+
+	sqlDB.SetMaxOpenConns(cfg.Database.MaxConns)
+	sqlDB.SetMaxIdleConns(cfg.Database.MinConns)
+	sqlDB.SetConnMaxLifetime(1 * time.Hour)
+	sqlDB.SetConnMaxIdleTime(15 * time.Minute)
+
+	log.Println("[INFO] Successfully connected to PostgreSQL via GORM")
 
 	cleanup := func() {
-		if pool != nil {
-			pool.Close()
-			log.Println("[INFO] Closed PostgreSQL connection pool")
+		if sqlDB != nil {
+			if err := sqlDB.Close(); err != nil {
+				log.Printf("[ERROR] Error closing PostgreSQL connection: %v", err)
+			} else {
+				log.Println("[INFO] Closed PostgreSQL connection pool")
+			}
 		}
 	}
 
-	return pool, cleanup, nil
+	return db, cleanup, nil
 }
-
