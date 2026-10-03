@@ -10,6 +10,7 @@ type Config struct {
 	App      AppConfig
 	Database DBConfig
 	Redis    RedisConfig
+	JWT      JWTConfig
 	NodeID   int64
 }
 
@@ -38,6 +39,11 @@ type RedisConfig struct {
 	DB       int
 }
 
+type JWTConfig struct {
+	Secret        string
+	ExpiresInHour int
+}
+
 // LoadConfig reads configuration from file or environment variables
 func LoadConfig(path ...string) (*Config, error) {
 	v := viper.New()
@@ -60,6 +66,9 @@ func LoadConfig(path ...string) (*Config, error) {
 	v.SetDefault("REDIS_PORT", "6379")
 	v.SetDefault("REDIS_PASSWORD", "")
 	v.SetDefault("REDIS_DB", 0)
+
+	v.SetDefault("JWT_SECRET", "super-secret-jwt-key-minimum-32-chars-long!")
+	v.SetDefault("JWT_EXPIRES_IN_HOUR", 24)
 
 	v.SetDefault("NODE_ID", 1)
 
@@ -103,9 +112,12 @@ func LoadConfig(path ...string) (*Config, error) {
 			Password: v.GetString("REDIS_PASSWORD"),
 			DB:       v.GetInt("REDIS_DB"),
 		},
+		JWT: JWTConfig{
+			Secret:        v.GetString("JWT_SECRET"),
+			ExpiresInHour: v.GetInt("JWT_EXPIRES_IN_HOUR"),
+		},
 		NodeID: v.GetInt64("NODE_ID"),
 	}
 
 	return cfg, nil
 }
-

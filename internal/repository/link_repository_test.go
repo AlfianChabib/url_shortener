@@ -7,6 +7,7 @@ import (
 	"url_shortener/internal/model/domain"
 	"url_shortener/internal/repository"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,8 +16,11 @@ func TestLinkRepository(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now()
+	id, err := uuid.NewV7()
+	assert.NoError(t, err)
+
 	link := &domain.Link{
-		ID:          123456789,
+		ID:          id,
 		ShortCode:   "repo-test",
 		OriginalURL: "https://example.com/repo-test",
 		IsActive:    true,
@@ -24,7 +28,7 @@ func TestLinkRepository(t *testing.T) {
 	}
 
 	// 1. Create Link
-	err := repo.Create(ctx, link)
+	err = repo.Create(ctx, link)
 	assert.NoError(t, err)
 
 	// Duplicate create should return error
@@ -34,6 +38,7 @@ func TestLinkRepository(t *testing.T) {
 	// 2. FindByShortCode
 	found, err := repo.FindByShortCode(ctx, "repo-test")
 	assert.NoError(t, err)
+	assert.Equal(t, link.ID, found.ID)
 	assert.Equal(t, link.ShortCode, found.ShortCode)
 	assert.Equal(t, link.OriginalURL, found.OriginalURL)
 

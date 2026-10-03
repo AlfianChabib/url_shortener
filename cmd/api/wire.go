@@ -28,7 +28,9 @@ func provideConfig() (*config.Config, error) {
 }
 
 func provideFiberApp(
+	cfg *config.Config,
 	linkCtrl controller.LinkController,
+	authCtrl controller.AuthController,
 	healthCtrl controller.HealthController,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
@@ -36,7 +38,7 @@ func provideFiberApp(
 		ErrorHandler: exeption.ErrorHandler,
 	})
 
-	router.SetupRouter(app, linkCtrl, healthCtrl)
+	router.SetupRouter(app, linkCtrl, authCtrl, healthCtrl, cfg.JWT.Secret)
 
 	return app
 }
@@ -48,8 +50,11 @@ var serverSet = wire.NewSet(
 	provideSnowflakeNode,
 	validator.NewValidator,
 	repository.NewLinkRepository,
+	repository.NewUserRepository,
 	service.NewLinkService,
+	service.NewAuthService,
 	controller.NewLinkController,
+	controller.NewAuthController,
 	controller.NewHealthController,
 	provideFiberApp,
 )

@@ -4,13 +4,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Link struct {
-	ID          int64      `gorm:"primaryKey;autoIncrement:false" json:"id"`
+	ID          uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
 	ShortCode   string     `gorm:"size:32;uniqueIndex;not null" json:"short_code"`
 	OriginalURL string     `gorm:"type:text;not null" json:"original_url"`
-	UserID      *uuid.UUID `gorm:"type:uuid" json:"user_id,omitempty"`
+	UserID      *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
+	User        *User      `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"user,omitempty"`
 	IsActive    bool       `gorm:"not null;default:true" json:"is_active"`
 	CreatedAt   time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 	ExpiresAt   *time.Time `gorm:"index" json:"expires_at,omitempty"`
@@ -18,6 +20,18 @@ type Link struct {
 
 func (Link) TableName() string {
 	return "links"
+}
+
+// BeforeCreate hook to auto-generate UUIDv7 if not provided
+func (l *Link) BeforeCreate(tx *gorm.DB) error {
+	if l.ID == uuid.Nil {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		l.ID = id
+	}
+	return nil
 }
 
 type ClickEvent struct {

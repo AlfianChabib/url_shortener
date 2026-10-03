@@ -49,6 +49,32 @@ func NewBadRequestError(message string, err ...error) *AppError {
 	}
 }
 
+// NewUnauthorizedError creates a 401 Unauthorized error
+func NewUnauthorizedError(message string, err ...error) *AppError {
+	var cause error
+	if len(err) > 0 {
+		cause = err[0]
+	}
+	return &AppError{
+		Code:    http.StatusUnauthorized,
+		Message: message,
+		Err:     cause,
+	}
+}
+
+// NewForbiddenError creates a 403 Forbidden error
+func NewForbiddenError(message string, err ...error) *AppError {
+	var cause error
+	if len(err) > 0 {
+		cause = err[0]
+	}
+	return &AppError{
+		Code:    http.StatusForbidden,
+		Message: message,
+		Err:     cause,
+	}
+}
+
 // NewConflictError creates a 409 Conflict error
 func NewConflictError(message string, err ...error) *AppError {
 	var cause error
@@ -87,4 +113,3 @@ func NewInternalError(message string, err ...error) *AppError {
 		Err:     cause,
 	}
 }
-

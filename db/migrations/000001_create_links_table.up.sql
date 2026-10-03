@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS links (
-    id BIGINT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     short_code VARCHAR(32) NOT NULL UNIQUE,
     original_url TEXT NOT NULL,
     user_id UUID NULL,
@@ -10,4 +10,3 @@ CREATE TABLE IF NOT EXISTS links (
 
 CREATE INDEX IF NOT EXISTS idx_links_short_code ON links(short_code);
 CREATE INDEX IF NOT EXISTS idx_links_expires_at ON links(expires_at) WHERE expires_at IS NOT NULL;
-

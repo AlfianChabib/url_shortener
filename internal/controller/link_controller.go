@@ -10,6 +10,7 @@ import (
 	"url_shortener/pkg/validator"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 )
 
 // LinkController handles link creation, redirection, and analytics.
@@ -39,7 +40,14 @@ func (ctrl *linkControllerImpl) Create(c fiber.Ctx) error {
 		return err
 	}
 
-	res, err := ctrl.service.CreateShortLink(c.Context(), &req)
+	var userID *uuid.UUID
+	if val := c.Locals("user_id"); val != nil {
+		if uid, ok := val.(uuid.UUID); ok && uid != uuid.Nil {
+			userID = &uid
+		}
+	}
+
+	res, err := ctrl.service.CreateShortLink(c.Context(), &req, userID)
 	if err != nil {
 		return err
 	}

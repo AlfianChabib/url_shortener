@@ -48,8 +48,11 @@ func InitializeServer() (*fiber.App, func(), error) {
 	linkService := service.NewLinkService(config, linkRepository, node)
 	customValidator := validator.NewValidator()
 	linkController := controller.NewLinkController(linkService, customValidator)
+	userRepository := repository.NewUserRepository(db)
+	authService := service.NewAuthService(config, userRepository)
+	authController := controller.NewAuthController(authService, customValidator)
 	healthController := controller.NewHealthController()
-	app := provideFiberApp(linkController, healthController)
+	app := provideFiberApp(config, linkController, authController, healthController)
 	return app, func() {
 		cleanup2()
 		cleanup()
@@ -67,18 +70,20 @@ func provideConfig() (*config.Config, error) {
 }
 
 func provideFiberApp(
+	cfg *config.Config,
 	linkCtrl controller.LinkController,
+	authCtrl controller.AuthController,
 	healthCtrl controller.HealthController,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "High-Performance URL Shortener",
 		ErrorHandler: exeption.ErrorHandler,
 	})
-	router.SetupRouter(app, linkCtrl, healthCtrl)
+	router.SetupRouter(app, linkCtrl, authCtrl, healthCtrl, cfg.JWT.Secret)
 
 	return app
 }
 
 var serverSet = wire.NewSet(
-	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, service.NewLinkService, controller.NewLinkController, controller.NewHealthController, provideFiberApp,
+	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, repository.NewUserRepository, service.NewLinkService, service.NewAuthService, controller.NewLinkController, controller.NewAuthController, controller.NewHealthController, provideFiberApp,
 )

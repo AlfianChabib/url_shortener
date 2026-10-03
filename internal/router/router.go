@@ -11,7 +11,9 @@ import (
 func SetupRouter(
 	app *fiber.App,
 	linkController controller.LinkController,
+	authController controller.AuthController,
 	healthController controller.HealthController,
+	jwtSecret string,
 ) {
 	// Global Middlewares
 	app.Use(middleware.NewRecoverMiddleware())
@@ -25,8 +27,15 @@ func SetupRouter(
 	// API v1 routes
 	api := app.Group("/api/v1")
 	{
+		// Auth routes
+		auth := api.Group("/auth")
+		auth.Post("/register", authController.Register)
+		auth.Post("/login", authController.Login)
+		auth.Get("/me", middleware.NewJWTMiddleware(jwtSecret), authController.GetProfile)
+
+		// Links routes (with optional JWT auth to identify user)
 		links := api.Group("/links")
-		links.Post("/", linkController.Create)
+		links.Post("/", middleware.NewOptionalJWTMiddleware(jwtSecret), linkController.Create)
 		links.Get("/:short_code/analytics", linkController.GetAnalytics)
 	}
 

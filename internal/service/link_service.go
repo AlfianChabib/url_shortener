@@ -13,13 +13,14 @@ import (
 	"url_shortener/pkg/utils"
 
 	"github.com/bwmarrin/snowflake"
+	"github.com/google/uuid"
 )
 
 var aliasRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{4,32}$`)
 
 // LinkService defines the business logic for shortening URLs and redirection.
 type LinkService interface {
-	CreateShortLink(ctx context.Context, req *web.CreateLinkRequest) (*web.LinkResponse, error)
+	CreateShortLink(ctx context.Context, req *web.CreateLinkRequest, userID ...*uuid.UUID) (*web.LinkResponse, error)
 	GetOriginalURL(ctx context.Context, shortCode string) (string, error)
 	GetAnalytics(ctx context.Context, shortCode string) (*web.AnalyticsResponse, error)
 }
@@ -39,10 +40,20 @@ func NewLinkService(cfg *config.Config, repo repository.LinkRepository, snowNode
 	}
 }
 
-func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLinkRequest) (*web.LinkResponse, error) {
+func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLinkRequest, userID ...*uuid.UUID) (*web.LinkResponse, error) {
+	var uID *uuid.UUID
+	if len(userID) > 0 && userID[0] != nil {
+		uID = userID[0]
+	}
+
 	var shortCode string
 
 	if req.CustomAlias != "" {
+		// PRD Section 3.1 & 3.4: Custom alias only available for authenticated users
+		if uID == nil {
+			return nil, errs.NewUnauthorizedError("custom alias is only available for authenticated users")
+		}
+
 		if !aliasRegex.MatchString(req.CustomAlias) {
 			return nil, errs.NewBadRequestError("custom alias must be 4-32 characters long and contain only alphanumeric, hyphen, or underscore characters")
 		}
@@ -55,13 +66,13 @@ func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLi
 		shortCode = req.CustomAlias
 	} else {
 		// Generate Snowflake ID and convert to Base62
-		var id int64
+		var num uint64
 		if s.snowNode != nil {
-			id = s.snowNode.Generate().Int64()
+			num = uint64(s.snowNode.Generate().Int64())
 		} else {
-			id = time.Now().UnixNano()
+			num = uint64(time.Now().UnixNano())
 		}
-		shortCode = utils.EncodeBase62(uint64(id))
+		shortCode = utils.EncodeBase62(num)
 	}
 
 	var expiresAt *time.Time
@@ -70,11 +81,10 @@ func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLi
 		expiresAt = &exp
 	}
 
-	var id int64
-	if s.snowNode != nil {
-		id = s.snowNode.Generate().Int64()
-	} else {
-		id = time.Now().UnixNano()
+	// Generate UUIDv7 for the primary key
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate UUIDv7: %w", err)
 	}
 
 	now := time.Now()
@@ -82,6 +92,7 @@ func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLi
 		ID:          id,
 		ShortCode:   shortCode,
 		OriginalURL: req.OriginalURL,
+		UserID:      uID,
 		IsActive:    true,
 		CreatedAt:   now,
 		ExpiresAt:   expiresAt,
@@ -179,4 +190,3 @@ func (s *linkServiceImpl) GetAnalytics(ctx context.Context, shortCode string) (*
 		},
 	}, nil
 }
-
