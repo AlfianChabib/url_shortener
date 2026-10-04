@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+	"url_shortener/internal/analytics"
 	"url_shortener/internal/config"
 	"url_shortener/internal/model/domain"
 	"url_shortener/internal/model/web"
 	"url_shortener/internal/repository"
 	"url_shortener/pkg/errs"
+	"url_shortener/pkg/geoip"
+	"url_shortener/pkg/useragent"
 	"url_shortener/pkg/utils"
 
 	"github.com/bwmarrin/snowflake"
@@ -18,25 +21,36 @@ import (
 
 var aliasRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{4,32}$`)
 
-// LinkService defines the business logic for shortening URLs and redirection.
+// LinkService defines the business logic for shortening URLs, redirection, user link management, and analytics.
 type LinkService interface {
 	CreateShortLink(ctx context.Context, req *web.CreateLinkRequest, userID ...*uuid.UUID) (*web.LinkResponse, error)
 	GetOriginalURL(ctx context.Context, shortCode string) (string, error)
 	GetAnalytics(ctx context.Context, shortCode string) (*web.AnalyticsResponse, error)
+	GetUserLinks(ctx context.Context, userID uuid.UUID, page, limit int) (*web.UserLinksResponse, error)
+	TrackClick(shortCode, ip, userAgent, referer, countryHeader string)
 }
 
 type linkServiceImpl struct {
-	cfg      *config.Config
-	repo     repository.LinkRepository
-	snowNode *snowflake.Node
+	cfg         *config.Config
+	repo        repository.LinkRepository
+	snowNode    *snowflake.Node
+	workerPool  analytics.WorkerPool
+	geoResolver geoip.Resolver
 }
 
 // NewLinkService creates a new LinkService instance.
-func NewLinkService(cfg *config.Config, repo repository.LinkRepository, snowNode *snowflake.Node) LinkService {
+func NewLinkService(
+	cfg *config.Config,
+	repo repository.LinkRepository,
+	snowNode *snowflake.Node,
+	workerPool analytics.WorkerPool,
+) LinkService {
 	return &linkServiceImpl{
-		cfg:      cfg,
-		repo:     repo,
-		snowNode: snowNode,
+		cfg:         cfg,
+		repo:        repo,
+		snowNode:    snowNode,
+		workerPool:  workerPool,
+		geoResolver: geoip.NewResolver("ID"),
 	}
 }
 
@@ -58,21 +72,17 @@ func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLi
 			return nil, errs.NewBadRequestError("custom alias must be 4-32 characters long and contain only alphanumeric, hyphen, or underscore characters")
 		}
 
-		// Check collision
-		existing, err := s.repo.FindByShortCode(ctx, req.CustomAlias)
-		if err == nil && existing != nil {
-			return nil, errs.NewConflictError("custom alias is already in use")
-		}
 		shortCode = req.CustomAlias
 	} else {
-		// Generate Snowflake ID and convert to Base62
-		var num uint64
+		// Auto-generate short code using Snowflake ID + Base62
+		var idInt int64
 		if s.snowNode != nil {
-			num = uint64(s.snowNode.Generate().Int64())
+			idInt = s.snowNode.Generate().Int64()
 		} else {
-			num = uint64(time.Now().UnixNano())
+			idInt = time.Now().UnixNano()
 		}
-		shortCode = utils.EncodeBase62(num)
+
+		shortCode = utils.EncodeBase62(uint64(idInt))
 	}
 
 	var expiresAt *time.Time
@@ -81,13 +91,12 @@ func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLi
 		expiresAt = &exp
 	}
 
-	// Generate UUIDv7 for the primary key
 	id, err := uuid.NewV7()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate UUIDv7: %w", err)
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	link := &domain.Link{
 		ID:          id,
 		ShortCode:   shortCode,
@@ -102,18 +111,14 @@ func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLi
 		return nil, err
 	}
 
-	// Cache in Redis
+	// Warm cache
 	ttl := 24 * time.Hour
 	if expiresAt != nil {
-		remaining := time.Until(*expiresAt)
-		if remaining < ttl {
-			ttl = remaining
-		}
+		ttl = time.Until(*expiresAt)
 	}
 	_ = s.repo.SetCache(ctx, shortCode, req.OriginalURL, ttl)
 
 	shortURL := fmt.Sprintf("%s/%s", s.cfg.App.BaseURL, shortCode)
-
 	return &web.LinkResponse{
 		ShortCode:   shortCode,
 		ShortURL:    shortURL,
@@ -127,11 +132,6 @@ func (s *linkServiceImpl) GetOriginalURL(ctx context.Context, shortCode string) 
 	// 1. Try cache
 	cachedURL, err := s.repo.GetCache(ctx, shortCode)
 	if err == nil && cachedURL != "" {
-		// Asynchronous decoupled click counting
-		go func(code string) {
-			_ = s.repo.IncrementClick(context.Background(), code)
-		}(shortCode)
-
 		return cachedURL, nil
 	}
 
@@ -153,12 +153,35 @@ func (s *linkServiceImpl) GetOriginalURL(ctx context.Context, shortCode string) 
 	}
 	_ = s.repo.SetCache(ctx, shortCode, link.OriginalURL, ttl)
 
-	// Asynchronous decoupled click counting
-	go func(code string) {
-		_ = s.repo.IncrementClick(context.Background(), code)
-	}(shortCode)
-
 	return link.OriginalURL, nil
+}
+
+func (s *linkServiceImpl) TrackClick(shortCode, ip, userAgent, referer, countryHeader string) {
+	uaInfo := useragent.Parse(userAgent)
+	geo := s.geoResolver.Resolve(ip, countryHeader)
+	salt := s.cfg.JWT.Secret
+	if salt == "" {
+		salt = "default-analytics-salt"
+	}
+	ipHash := s.geoResolver.AnonymizeIP(ip, salt)
+
+	event := &domain.ClickEvent{
+		ShortCode:   shortCode,
+		ClickedAt:   time.Now().UTC(),
+		IPHash:      ipHash,
+		CountryCode: geo.CountryCode,
+		City:        geo.City,
+		DeviceType:  uaInfo.DeviceType,
+		Browser:     uaInfo.Browser,
+		OS:          uaInfo.OS,
+		Referer:     referer,
+	}
+
+	if s.workerPool != nil {
+		s.workerPool.Enqueue(event)
+	} else {
+		_ = s.repo.RecordClickEvents(context.Background(), []*domain.ClickEvent{event})
+	}
 }
 
 func (s *linkServiceImpl) GetAnalytics(ctx context.Context, shortCode string) (*web.AnalyticsResponse, error) {
@@ -168,25 +191,42 @@ func (s *linkServiceImpl) GetAnalytics(ctx context.Context, shortCode string) (*
 		return nil, err
 	}
 
-	clicks, err := s.repo.GetClickCount(ctx, shortCode)
-	if err != nil {
-		clicks = 0
+	return s.repo.GetAnalytics(ctx, shortCode)
+}
+
+func (s *linkServiceImpl) GetUserLinks(ctx context.Context, userID uuid.UUID, page, limit int) (*web.UserLinksResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
 	}
 
-	return &web.AnalyticsResponse{
-		ShortCode:    shortCode,
-		TotalClicks:  clicks,
-		UniqueClicks: clicks,
-		TopCountries: []web.CountryClick{
-			{Code: "ID", Clicks: clicks},
-		},
-		Devices: web.DevicesStats{
-			Mobile:  60.0,
-			Desktop: 35.0,
-			Bot:     5.0,
-		},
-		TimeSeries: []web.TimeSeriesData{
-			{Timestamp: time.Now().Truncate(time.Hour), Count: clicks},
-		},
+	links, total, err := s.repo.FindByUserID(ctx, userID, page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]web.UserLinkItem, 0, len(links))
+	for _, l := range links {
+		items = append(items, web.UserLinkItem{
+			ID:          l.ID,
+			ShortCode:   l.ShortCode,
+			ShortURL:    fmt.Sprintf("%s/%s", s.cfg.App.BaseURL, l.ShortCode),
+			OriginalURL: l.OriginalURL,
+			IsActive:    l.IsActive,
+			CreatedAt:   l.CreatedAt,
+			ExpiresAt:   l.ExpiresAt,
+		})
+	}
+
+	return &web.UserLinksResponse{
+		Total: total,
+		Page:  page,
+		Limit: limit,
+		Links: items,
 	}, nil
 }

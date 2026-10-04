@@ -10,6 +10,7 @@ import (
 	"github.com/bwmarrin/snowflake"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/wire"
+	"url_shortener/internal/analytics"
 	"url_shortener/internal/config"
 	"url_shortener/internal/controller"
 	"url_shortener/internal/database"
@@ -45,7 +46,13 @@ func InitializeServer() (*fiber.App, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	linkService := service.NewLinkService(config, linkRepository, node)
+	workerPool, cleanup3, err := provideWorkerPool(linkRepository)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	linkService := service.NewLinkService(config, linkRepository, node, workerPool)
 	customValidator := validator.NewValidator()
 	linkController := controller.NewLinkController(linkService, customValidator)
 	userRepository := repository.NewUserRepository(db)
@@ -54,6 +61,7 @@ func InitializeServer() (*fiber.App, func(), error) {
 	healthController := controller.NewHealthController()
 	app := provideFiberApp(config, linkController, authController, healthController)
 	return app, func() {
+		cleanup3()
 		cleanup2()
 		cleanup()
 	}, nil
@@ -67,6 +75,15 @@ func provideSnowflakeNode(cfg *config.Config) (*snowflake.Node, error) {
 
 func provideConfig() (*config.Config, error) {
 	return config.LoadConfig()
+}
+
+func provideWorkerPool(repo repository.LinkRepository) (analytics.WorkerPool, func(), error) {
+	wp := analytics.NewWorkerPool(repo, analytics.DefaultConfig())
+	wp.Start()
+	cleanup := func() {
+		wp.Stop()
+	}
+	return wp, cleanup, nil
 }
 
 func provideFiberApp(
@@ -85,5 +102,5 @@ func provideFiberApp(
 }
 
 var serverSet = wire.NewSet(
-	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, repository.NewUserRepository, service.NewLinkService, service.NewAuthService, controller.NewLinkController, controller.NewAuthController, controller.NewHealthController, provideFiberApp,
+	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, repository.NewUserRepository, provideWorkerPool, service.NewLinkService, service.NewAuthService, controller.NewLinkController, controller.NewAuthController, controller.NewHealthController, provideFiberApp,
 )

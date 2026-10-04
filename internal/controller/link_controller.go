@@ -2,6 +2,8 @@ package controller
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 	"url_shortener/internal/helper/request"
 	"url_shortener/internal/helper/response"
 	"url_shortener/internal/model/web"
@@ -13,11 +15,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// LinkController handles link creation, redirection, and analytics.
+// LinkController handles link creation, redirection, analytics, and user link management.
 type LinkController interface {
 	Create(c fiber.Ctx) error
 	Redirect(c fiber.Ctx) error
 	GetAnalytics(c fiber.Ctx) error
+	GetUserLinks(c fiber.Ctx) error
 }
 
 type linkControllerImpl struct {
@@ -67,6 +70,21 @@ func (ctrl *linkControllerImpl) Redirect(c fiber.Ctx) error {
 		return err
 	}
 
+	// Capture telemetry for Phase 2 async analytics pipeline
+	ip := c.IP()
+	if xff := c.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		ip = strings.TrimSpace(parts[0])
+	}
+	ua := c.Get("User-Agent")
+	referer := c.Get("Referer")
+	countryHeader := c.Get("CF-IPCountry")
+	if countryHeader == "" {
+		countryHeader = c.Get("X-Country-Code")
+	}
+
+	ctrl.service.TrackClick(shortCode, ip, ua, referer, countryHeader)
+
 	// PRD Section 3.2: Use HTTP 307 Temporary Redirect to prevent client-side permanent caching
 	c.Set("Cache-Control", "private, max-age=60")
 	return c.Redirect().Status(http.StatusTemporaryRedirect).To(originalURL)
@@ -80,6 +98,40 @@ func (ctrl *linkControllerImpl) GetAnalytics(c fiber.Ctx) error {
 	}
 
 	res, err := ctrl.service.GetAnalytics(c.Context(), shortCode)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, http.StatusOK, res)
+}
+
+// GetUserLinks handles GET /api/v1/user/links?page=1&limit=20
+func (ctrl *linkControllerImpl) GetUserLinks(c fiber.Ctx) error {
+	val := c.Locals("user_id")
+	if val == nil {
+		return errs.NewUnauthorizedError("unauthorized: missing user authentication")
+	}
+
+	uid, ok := val.(uuid.UUID)
+	if !ok || uid == uuid.Nil {
+		return errs.NewUnauthorizedError("unauthorized: invalid user identity")
+	}
+
+	page := 1
+	if pStr := c.Query("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	limit := 20
+	if lStr := c.Query("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	res, err := ctrl.service.GetUserLinks(c.Context(), uid, page, limit)
 	if err != nil {
 		return err
 	}

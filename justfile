@@ -42,6 +42,17 @@ docker-down:
 docker-logs:
     docker compose logs -f
 
+# Database migrations
+migrate-up:
+    migrate -path db/migrations -database "postgres://postgres:postgres@localhost:5432/url_shortener_db?sslmode=disable" up
+
+migrate-down:
+    migrate -path db/migrations -database "postgres://postgres:postgres@localhost:5432/url_shortener_db?sslmode=disable" down 1
+
+# Seed database with initial data
+db-seed:
+    Get-Content db/seed/seed.sql | docker exec -i url_shortener_postgres psql -U postgres -d url_shortener_db
+
 # Clean build artifacts
 clean:
     if (Test-Path tmp) { Remove-Item -Recurse -Force tmp }

@@ -33,10 +33,14 @@ func SetupRouter(
 		auth.Post("/login", authController.Login)
 		auth.Get("/me", middleware.NewJWTMiddleware(jwtSecret), authController.GetProfile)
 
+		// User dashboard routes (Protected)
+		user := api.Group("/user", middleware.NewJWTMiddleware(jwtSecret))
+		user.Get("/links", linkController.GetUserLinks)
+
 		// Links routes (with optional JWT auth to identify user)
 		links := api.Group("/links")
 		links.Post("/", middleware.NewOptionalJWTMiddleware(jwtSecret), linkController.Create)
-		links.Get("/:short_code/analytics", linkController.GetAnalytics)
+		links.Get("/:short_code/analytics", middleware.NewOptionalJWTMiddleware(jwtSecret), linkController.GetAnalytics)
 	}
 
 	// High-Throughput Redirection Route

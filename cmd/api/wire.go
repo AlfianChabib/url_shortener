@@ -4,6 +4,7 @@
 package main
 
 import (
+	"url_shortener/internal/analytics"
 	"url_shortener/internal/config"
 	"url_shortener/internal/controller"
 	"url_shortener/internal/database"
@@ -25,6 +26,15 @@ func provideSnowflakeNode(cfg *config.Config) (*snowflake.Node, error) {
 
 func provideConfig() (*config.Config, error) {
 	return config.LoadConfig()
+}
+
+func provideWorkerPool(repo repository.LinkRepository) (analytics.WorkerPool, func(), error) {
+	wp := analytics.NewWorkerPool(repo, analytics.DefaultConfig())
+	wp.Start()
+	cleanup := func() {
+		wp.Stop()
+	}
+	return wp, cleanup, nil
 }
 
 func provideFiberApp(
@@ -51,6 +61,7 @@ var serverSet = wire.NewSet(
 	validator.NewValidator,
 	repository.NewLinkRepository,
 	repository.NewUserRepository,
+	provideWorkerPool,
 	service.NewLinkService,
 	service.NewAuthService,
 	controller.NewLinkController,

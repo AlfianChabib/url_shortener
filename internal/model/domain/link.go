@@ -35,10 +35,11 @@ func (l *Link) BeforeCreate(tx *gorm.DB) error {
 }
 
 type ClickEvent struct {
+	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id,omitempty"`
 	ShortCode   string    `gorm:"type:varchar(32);index;not null" json:"short_code"`
 	ClickedAt   time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"clicked_at"`
-	IPHash      string    `gorm:"type:char(32)" json:"ip_hash"`
-	CountryCode string    `gorm:"type:char(2)" json:"country_code"`
+	IPHash      string    `gorm:"type:varchar(64)" json:"ip_hash"`
+	CountryCode string    `gorm:"type:varchar(10)" json:"country_code"`
 	City        string    `gorm:"type:varchar(100)" json:"city"`
 	DeviceType  string    `gorm:"type:varchar(50)" json:"device_type"`
 	Browser     string    `gorm:"type:varchar(50)" json:"browser"`
