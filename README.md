@@ -47,32 +47,32 @@ A production-grade, distributed, high-throughput URL Shortener designed to susta
 
 ```mermaid
 flowchart TD
-    Client([Client / Browser]) -->|HTTP Request| FiberApp[Fiber v3 HTTP Router]
+    Client["Client / Browser"] -->|HTTP Request| FiberApp["Fiber v3 HTTP Router"]
     
     subgraph Middlewares
-        FiberApp --> RecoverMW[Recover Middleware]
-        RecoverMW --> SecurityMW[Security Headers & CORS]
-        SecurityMW --> RateLimitMW[Rate Limiter (Redis)]
-        RateLimitMW --> AuthMW[JWT Auth / Blacklist Check]
+        FiberApp --> RecoverMW["Recover Middleware"]
+        RecoverMW --> SecurityMW["Security Headers & CORS"]
+        SecurityMW --> RateLimitMW["Rate Limiter (Redis)"]
+        RateLimitMW --> AuthMW["JWT Auth / Blacklist Check"]
     end
 
     subgraph Controllers & Services
-        AuthMW --> AuthCtrl[Auth Controller]
-        AuthMW --> LinkCtrl[Link Controller]
+        AuthMW --> AuthCtrl["Auth Controller"]
+        AuthMW --> LinkCtrl["Link Controller"]
         
-        LinkCtrl --> LinkService[Link Service]
-        LinkService --> SSRF[SSRF Validator + In-Memory DNS Cache]
-        LinkService --> Snowflake[Snowflake Node / Base62]
+        LinkCtrl --> LinkService["Link Service"]
+        LinkService --> SSRF["SSRF Validator + In-Memory DNS Cache"]
+        LinkService --> Snowflake["Snowflake Node / Base62"]
     end
 
     subgraph Data Stores
-        LinkService --> Repo[Link Repository]
-        Repo -->|Cache Hit/Miss| Redis[(Redis 7)]
-        Repo -->|Persistent Storage| Postgres[(PostgreSQL 16)]
+        LinkService --> Repo["Link Repository"]
+        Repo -->|Cache Hit/Miss| Redis[("Redis 7")]
+        Repo -->|Persistent Storage| Postgres[("PostgreSQL 16")]
     end
 
     subgraph Asynchronous Pipeline
-        LinkCtrl -.->|Non-blocking Enqueue| WorkerPool[Analytics Worker Pool]
+        LinkCtrl -.->|Non-blocking Enqueue| WorkerPool["Analytics Worker Pool"]
         WorkerPool -->|Batch Flush| Postgres
     end
 ```
