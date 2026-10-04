@@ -14,6 +14,7 @@ import (
 	"url_shortener/pkg/geoip"
 	"url_shortener/pkg/useragent"
 	"url_shortener/pkg/utils"
+	"url_shortener/pkg/validator"
 
 	"github.com/bwmarrin/snowflake"
 	"github.com/google/uuid"
@@ -36,6 +37,7 @@ type linkServiceImpl struct {
 	snowNode    *snowflake.Node
 	workerPool  analytics.WorkerPool
 	geoResolver geoip.Resolver
+	ssrfVal     validator.SSRFValidator
 }
 
 // NewLinkService creates a new LinkService instance.
@@ -44,17 +46,30 @@ func NewLinkService(
 	repo repository.LinkRepository,
 	snowNode *snowflake.Node,
 	workerPool analytics.WorkerPool,
+	ssrfVal validator.SSRFValidator,
 ) LinkService {
+	if ssrfVal == nil {
+		ssrfVal = validator.NewSSRFValidator(cfg.App.BaseURL, nil)
+	}
+
 	return &linkServiceImpl{
 		cfg:         cfg,
 		repo:        repo,
 		snowNode:    snowNode,
 		workerPool:  workerPool,
 		geoResolver: geoip.NewResolver("ID"),
+		ssrfVal:     ssrfVal,
 	}
 }
 
 func (s *linkServiceImpl) CreateShortLink(ctx context.Context, req *web.CreateLinkRequest, userID ...*uuid.UUID) (*web.LinkResponse, error) {
+	// PRD Section 6.1: SSRF DNS validation, scheme whitelisting, and loop redirection check
+	if s.ssrfVal != nil {
+		if err := s.ssrfVal.ValidateURL(ctx, req.OriginalURL); err != nil {
+			return nil, err
+		}
+	}
+
 	var uID *uuid.UUID
 	if len(userID) > 0 && userID[0] != nil {
 		uID = userID[0]

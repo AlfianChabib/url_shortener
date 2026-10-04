@@ -167,8 +167,13 @@ func (w *workerPoolImpl) workerLoop() {
 // Flush forces an immediate drain and flush of all pending events in the buffer.
 func (w *workerPoolImpl) Flush() {
 	ack := make(chan struct{})
-	w.flushChan <- ack
-	<-ack
+	select {
+	case w.flushChan <- ack:
+		<-ack
+	case <-w.stopChan:
+		// already stopped
+		return
+	}
 }
 
 // Stop signals the worker to finish processing and gracefully flushes all remaining items.

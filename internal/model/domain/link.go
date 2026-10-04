@@ -9,7 +9,7 @@ import (
 
 type Link struct {
 	ID          uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
-	ShortCode   string     `gorm:"size:32;uniqueIndex;not null" json:"short_code"`
+	ShortCode   string     `gorm:"size:32;unique;not null" json:"short_code"`
 	OriginalURL string     `gorm:"type:text;not null" json:"original_url"`
 	UserID      *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
 	User        *User      `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"user,omitempty"`

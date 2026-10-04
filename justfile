@@ -18,9 +18,29 @@ dev:
 build:
     go build -o ./bin/app.exe ./cmd/api
 
+# Run the compiled binary
+start:
+    ./bin/app.exe
+
 # Run all unit tests
 test:
     go test -v ./...
+
+# Run performance benchmarks with memory allocations
+bench:
+    go test -bench="Benchmark" -benchmem -run="^$" ./cmd/api
+
+# Run k6 redirect load test (10k RPS target)
+loadtest-redirect:
+    k6 run scripts/k6/redirect_10k_rps.js
+
+# Run k6 link creation load test (1k RPS target)
+loadtest-create:
+    k6 run scripts/k6/create_link_1k_rps.js
+
+# Run full system enterprise stress test
+loadtest-all:
+    k6 run scripts/k6/enterprise_stress_test.js
 
 # Generate Wire dependency injection code
 wire:

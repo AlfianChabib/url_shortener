@@ -59,8 +59,8 @@ func LoadConfig(path ...string) (*Config, error) {
 	v.SetDefault("DB_PASSWORD", "postgres")
 	v.SetDefault("DB_NAME", "url_shortener_db")
 	v.SetDefault("DB_SSL_MODE", "disable")
-	v.SetDefault("DB_MAX_CONNS", 25)
-	v.SetDefault("DB_MIN_CONNS", 5)
+	v.SetDefault("DB_MAX_CONNS", 80)
+	v.SetDefault("DB_MIN_CONNS", 40)
 
 	v.SetDefault("REDIS_HOST", "localhost")
 	v.SetDefault("REDIS_PORT", "6379")

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 	"url_shortener/internal/analytics"
@@ -10,6 +11,7 @@ import (
 	"url_shortener/internal/repository"
 	"url_shortener/internal/service"
 	"url_shortener/pkg/utils"
+	"url_shortener/pkg/validator"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +38,12 @@ func TestLinkService(t *testing.T) {
 	wp.Start()
 	defer wp.Stop()
 
-	svc := service.NewLinkService(cfg, repo, snowNode, wp)
+	mockDNS := func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	ssrfVal := validator.NewSSRFValidator(cfg.App.BaseURL, mockDNS)
+
+	svc := service.NewLinkService(cfg, repo, snowNode, wp, ssrfVal)
 	ctx := context.Background()
 
 	userID, err := uuid.NewV7()
@@ -52,6 +59,14 @@ func TestLinkService(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "promo-sale-2026", res.ShortCode)
 	assert.Equal(t, "https://s.id/promo-sale-2026", res.ShortURL)
+
+	// 1b. SSRF rejection check: private IP target must be blocked
+	badReq := &web.CreateLinkRequest{
+		OriginalURL: "http://127.0.0.1:8080/admin",
+	}
+	_, err = svc.CreateShortLink(ctx, badReq, &userID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "SSRF protection")
 
 	// 2. Guest cannot create custom alias
 	_, err = svc.CreateShortLink(ctx, aliasReq)

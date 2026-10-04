@@ -101,6 +101,19 @@ func NewGoneError(message string, err ...error) *AppError {
 	}
 }
 
+// NewTooManyRequestsError creates a 429 Too Many Requests error
+func NewTooManyRequestsError(message string, err ...error) *AppError {
+	var cause error
+	if len(err) > 0 {
+		cause = err[0]
+	}
+	return &AppError{
+		Code:    http.StatusTooManyRequests,
+		Message: message,
+		Err:     cause,
+	}
+}
+
 // NewInternalError creates a 500 Internal Server Error
 func NewInternalError(message string, err ...error) *AppError {
 	var cause error

@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 	"url_shortener/internal/config"
-	"url_shortener/internal/model/domain"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -50,11 +49,6 @@ func NewGormDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	sqlDB.SetConnMaxIdleTime(15 * time.Minute)
 
 	log.Println("[INFO] Successfully connected to PostgreSQL via GORM")
-
-	// Auto-migrate tables for schema synchronization
-	if err := db.AutoMigrate(&domain.User{}, &domain.Link{}, &domain.ClickEvent{}); err != nil {
-		log.Printf("[WARN] Failed to auto-migrate database tables: %v", err)
-	}
 
 	cleanup := func() {
 		if sqlDB != nil {

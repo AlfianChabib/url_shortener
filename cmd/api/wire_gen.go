@@ -15,6 +15,7 @@ import (
 	"url_shortener/internal/controller"
 	"url_shortener/internal/database"
 	"url_shortener/internal/exeption"
+	"url_shortener/internal/middleware"
 	"url_shortener/internal/repository"
 	"url_shortener/internal/router"
 	"url_shortener/internal/service"
@@ -52,14 +53,17 @@ func InitializeServer() (*fiber.App, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	linkService := service.NewLinkService(config, linkRepository, node, workerPool)
+	ssrfValidator := provideSSRFValidator(config)
+	linkService := service.NewLinkService(config, linkRepository, node, workerPool, ssrfValidator)
 	customValidator := validator.NewValidator()
 	linkController := controller.NewLinkController(linkService, customValidator)
 	userRepository := repository.NewUserRepository(db)
-	authService := service.NewAuthService(config, userRepository)
+	tokenBlacklistRepository := repository.NewTokenBlacklistRepository(client)
+	authService := service.NewAuthService(config, userRepository, tokenBlacklistRepository)
 	authController := controller.NewAuthController(authService, customValidator)
 	healthController := controller.NewHealthController()
-	app := provideFiberApp(config, linkController, authController, healthController)
+	rateLimiter := middleware.NewRateLimiter(client)
+	app := provideFiberApp(config, linkController, authController, healthController, tokenBlacklistRepository, rateLimiter)
 	return app, func() {
 		cleanup3()
 		cleanup2()
@@ -77,6 +81,10 @@ func provideConfig() (*config.Config, error) {
 	return config.LoadConfig()
 }
 
+func provideSSRFValidator(cfg *config.Config) validator.SSRFValidator {
+	return validator.NewSSRFValidator(cfg.App.BaseURL, nil)
+}
+
 func provideWorkerPool(repo repository.LinkRepository) (analytics.WorkerPool, func(), error) {
 	wp := analytics.NewWorkerPool(repo, analytics.DefaultConfig())
 	wp.Start()
@@ -91,16 +99,18 @@ func provideFiberApp(
 	linkCtrl controller.LinkController,
 	authCtrl controller.AuthController,
 	healthCtrl controller.HealthController,
+	blacklistRepo repository.TokenBlacklistRepository,
+	rateLimiter middleware.RateLimiter,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "High-Performance URL Shortener",
 		ErrorHandler: exeption.ErrorHandler,
 	})
-	router.SetupRouter(app, linkCtrl, authCtrl, healthCtrl, cfg.JWT.Secret)
+	router.SetupRouter(app, linkCtrl, authCtrl, healthCtrl, cfg.JWT.Secret, blacklistRepo, rateLimiter)
 
 	return app
 }
 
 var serverSet = wire.NewSet(
-	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, repository.NewLinkRepository, repository.NewUserRepository, provideWorkerPool, service.NewLinkService, service.NewAuthService, controller.NewLinkController, controller.NewAuthController, controller.NewHealthController, provideFiberApp,
+	provideConfig, database.NewGormDB, database.NewRedisClient, provideSnowflakeNode, validator.NewValidator, provideSSRFValidator, repository.NewTokenBlacklistRepository, middleware.NewRateLimiter, repository.NewLinkRepository, repository.NewUserRepository, provideWorkerPool, service.NewLinkService, service.NewAuthService, controller.NewLinkController, controller.NewAuthController, controller.NewHealthController, provideFiberApp,
 )

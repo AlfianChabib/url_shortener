@@ -19,7 +19,8 @@ func TestAuthService(t *testing.T) {
 		},
 	}
 	repo := repository.NewUserRepository(nil)
-	svc := service.NewAuthService(cfg, repo)
+	blacklistRepo := repository.NewTokenBlacklistRepository(nil)
+	svc := service.NewAuthService(cfg, repo, blacklistRepo)
 	ctx := context.Background()
 
 	// 1. Register User
@@ -70,4 +71,12 @@ func TestAuthService(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, userResp.ID, profile.ID)
 	assert.Equal(t, userResp.Email, profile.Email)
+
+	// 6. Logout and verify token is blacklisted
+	err = svc.Logout(ctx, loginResp.AccessToken)
+	assert.NoError(t, err)
+
+	isBlacklisted, err := blacklistRepo.IsTokenBlacklisted(ctx, loginResp.AccessToken)
+	assert.NoError(t, err)
+	assert.True(t, isBlacklisted)
 }

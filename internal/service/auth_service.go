@@ -19,18 +19,29 @@ type AuthService interface {
 	Register(ctx context.Context, req *web.RegisterRequest) (*web.UserResponse, error)
 	Login(ctx context.Context, req *web.LoginRequest) (*web.LoginResponse, error)
 	GetProfile(ctx context.Context, userID uuid.UUID) (*web.UserResponse, error)
+	Logout(ctx context.Context, tokenString string) error
 }
 
 type authServiceImpl struct {
-	cfg      *config.Config
-	userRepo repository.UserRepository
+	cfg           *config.Config
+	userRepo      repository.UserRepository
+	blacklistRepo repository.TokenBlacklistRepository
 }
 
 // NewAuthService creates a new AuthService instance.
-func NewAuthService(cfg *config.Config, userRepo repository.UserRepository) AuthService {
+func NewAuthService(
+	cfg *config.Config,
+	userRepo repository.UserRepository,
+	blacklistRepo repository.TokenBlacklistRepository,
+) AuthService {
+	if blacklistRepo == nil {
+		blacklistRepo = repository.NewTokenBlacklistRepository(nil)
+	}
+
 	return &authServiceImpl{
-		cfg:      cfg,
-		userRepo: userRepo,
+		cfg:           cfg,
+		userRepo:      userRepo,
+		blacklistRepo: blacklistRepo,
 	}
 }
 
@@ -132,4 +143,28 @@ func (s *authServiceImpl) GetProfile(ctx context.Context, userID uuid.UUID) (*we
 		Username:  user.Username,
 		CreatedAt: user.CreatedAt,
 	}, nil
+}
+
+// Logout revokes the given JWT token by adding it to the blacklist with its remaining TTL.
+func (s *authServiceImpl) Logout(ctx context.Context, tokenString string) error {
+	if tokenString == "" {
+		return nil
+	}
+
+	claims, err := utils.ValidateToken(tokenString, s.cfg.JWT.Secret)
+	if err != nil {
+		// If token is already invalid, no further revocation needed
+		return nil
+	}
+
+	var ttl time.Duration = 24 * time.Hour
+	if claims.ExpiresAt != nil {
+		ttl = time.Until(claims.ExpiresAt.Time)
+	}
+
+	if ttl > 0 && s.blacklistRepo != nil {
+		return s.blacklistRepo.BlacklistToken(ctx, tokenString, ttl)
+	}
+
+	return nil
 }

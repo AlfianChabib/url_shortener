@@ -2,9 +2,11 @@ package main_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"url_shortener/internal/config"
 	"url_shortener/internal/controller"
 	"url_shortener/internal/exeption"
+	"url_shortener/internal/middleware"
 	"url_shortener/internal/model/web"
 	"url_shortener/internal/repository"
 	"url_shortener/internal/router"
@@ -45,6 +48,8 @@ func setupTestApp() (*fiber.App, analytics.WorkerPool) {
 	// Passing nil pool and redis triggers in-memory fallback mode
 	linkRepo := repository.NewLinkRepository(nil, nil)
 	userRepo := repository.NewUserRepository(nil)
+	blacklistRepo := repository.NewTokenBlacklistRepository(nil)
+	limiter := middleware.NewRateLimiter(nil)
 
 	// Instant flush worker pool for tests
 	wp := analytics.NewWorkerPool(linkRepo, analytics.Config{
@@ -54,8 +59,13 @@ func setupTestApp() (*fiber.App, analytics.WorkerPool) {
 	})
 	wp.Start()
 
-	linkSvc := service.NewLinkService(cfg, linkRepo, snowNode, wp)
-	authSvc := service.NewAuthService(cfg, userRepo)
+	mockDNS := func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	ssrfVal := validator.NewSSRFValidator(cfg.App.BaseURL, mockDNS)
+
+	linkSvc := service.NewLinkService(cfg, linkRepo, snowNode, wp, ssrfVal)
+	authSvc := service.NewAuthService(cfg, userRepo, blacklistRepo)
 
 	linkCtrl := controller.NewLinkController(linkSvc, val)
 	authCtrl := controller.NewAuthController(authSvc, val)
@@ -65,7 +75,7 @@ func setupTestApp() (*fiber.App, analytics.WorkerPool) {
 		ErrorHandler: exeption.ErrorHandler,
 	})
 
-	router.SetupRouter(app, linkCtrl, authCtrl, healthCtrl, cfg.JWT.Secret)
+	router.SetupRouter(app, linkCtrl, authCtrl, healthCtrl, cfg.JWT.Secret, blacklistRepo, limiter)
 	return app, wp
 }
 
@@ -441,3 +451,208 @@ func TestRedirectNotFound(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+func TestLogoutAndTokenRevocation(t *testing.T) {
+	app, wp := setupTestApp()
+	defer wp.Stop()
+
+	// 1. Register & Login
+	regPayload := web.RegisterRequest{
+		Email:    "logoutuser@example.com",
+		Username: "logoutuser",
+		Password: "Password123!",
+	}
+	b, _ := json.Marshal(regPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	_, _ = app.Test(req)
+
+	loginPayload := web.LoginRequest{
+		Identifier: "logoutuser",
+		Password:   "Password123!",
+	}
+	b, _ = json.Marshal(loginPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	loginResp, _ := app.Test(req)
+
+	var loginResult struct {
+		Data web.LoginResponse `json:"data"`
+	}
+	body, _ := io.ReadAll(loginResp.Body)
+	_ = json.Unmarshal(body, &loginResult)
+	token := loginResult.Data.AccessToken
+	assert.NotEmpty(t, token)
+
+	// 2. Access profile with token -> 200 OK
+	meReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	meReq.Header.Set("Authorization", "Bearer "+token)
+	meResp, err := app.Test(meReq)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, meResp.StatusCode)
+
+	// 3. Logout -> 200 OK
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logoutReq.Header.Set("Authorization", "Bearer "+token)
+	logoutResp, err := app.Test(logoutReq)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, logoutResp.StatusCode)
+
+	// 4. Access profile again with REVOKED token -> 401 Unauthorized
+	meReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	meReq2.Header.Set("Authorization", "Bearer "+token)
+	meResp2, err := app.Test(meReq2)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, meResp2.StatusCode)
+	meBody, _ := io.ReadAll(meResp2.Body)
+	assert.Contains(t, string(meBody), "revoked")
+}
+
+func TestSSRFPreventionInLinkCreation(t *testing.T) {
+	app, wp := setupTestApp()
+	defer wp.Stop()
+
+	tests := []struct {
+		name       string
+		targetURL  string
+		wantStatus int
+		errContain string
+	}{
+		{
+			name:       "Block localhost literal",
+			targetURL:  "http://localhost:8080/admin",
+			wantStatus: http.StatusBadRequest,
+			errContain: "loop redirection is prohibited",
+		},
+		{
+			name:       "Block 127.0.0.1 loopback",
+			targetURL:  "http://127.0.0.1:3000/metrics",
+			wantStatus: http.StatusBadRequest,
+			errContain: "loopback and localhost addresses are prohibited",
+		},
+		{
+			name:       "Block AWS cloud metadata",
+			targetURL:  "http://169.254.169.254/latest/meta-data/",
+			wantStatus: http.StatusBadRequest,
+			errContain: "SSRF protection",
+		},
+		{
+			name:       "Block non-http scheme (ftp)",
+			targetURL:  "ftp://example.com/secret.txt",
+			wantStatus: http.StatusBadRequest,
+			errContain: "only 'http://' and 'https://' are allowed",
+		},
+		{
+			name:       "Block loop redirection to app base domain",
+			targetURL:  "http://localhost:3000/loop",
+			wantStatus: http.StatusBadRequest,
+			errContain: "loop redirection is prohibited",
+		},
+		{
+			name:       "Allow valid public URL",
+			targetURL:  "https://example.com/safe-article",
+			wantStatus: http.StatusCreated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := web.CreateLinkRequest{
+				OriginalURL: tt.targetURL,
+			}
+			b, _ := json.Marshal(payload)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/links", bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Forwarded-For", "203.0.113.199") // use unique IP to avoid rate limit conflicts
+
+			resp, err := app.Test(req)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+
+			if tt.errContain != "" {
+				body, _ := io.ReadAll(resp.Body)
+				assert.Contains(t, string(body), tt.errContain)
+			}
+		})
+	}
+}
+
+func TestPasswordAndUsernamePolicies(t *testing.T) {
+	app, wp := setupTestApp()
+	defer wp.Stop()
+
+	// 1. Password without uppercase letter -> fails
+	noUpper := web.RegisterRequest{
+		Email:    "noupper@example.com",
+		Username: "noupper",
+		Password: "password123!",
+	}
+	b, _ := json.Marshal(noUpper)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "192.0.2.1")
+	resp, _ := app.Test(req)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// 2. Password without number -> fails
+	noDigit := web.RegisterRequest{
+		Email:    "nodigit@example.com",
+		Username: "nodigit",
+		Password: "PasswordNoNumber!",
+	}
+	b, _ = json.Marshal(noDigit)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "192.0.2.2")
+	resp, _ = app.Test(req)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// 3. Username with invalid characters -> fails
+	badUser := web.RegisterRequest{
+		Email:    "baduser@example.com",
+		Username: "user!name@invalid",
+		Password: "Password123!",
+	}
+	b, _ = json.Marshal(badUser)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "192.0.2.3")
+	resp, _ = app.Test(req)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// 4. Valid username with dot and underscore + strong password -> succeeds
+	validUser := web.RegisterRequest{
+		Email:    "valid.user@example.com",
+		Username: "valid_user.99",
+		Password: "StrongPassword123!",
+	}
+	b, _ = json.Marshal(validUser)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "192.0.2.4")
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+}
+
+func TestRateLimitingIntegration(t *testing.T) {
+	app, wp := setupTestApp()
+	defer wp.Stop()
+
+	// Verify rate limit headers on link creation
+	payload := web.CreateLinkRequest{
+		OriginalURL: "https://example.com/ratelimit-test",
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/links", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "198.51.100.50")
+
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, "10", resp.Header.Get("X-RateLimit-Limit"))
+	assert.NotEmpty(t, resp.Header.Get("X-RateLimit-Remaining"))
+	assert.NotEmpty(t, resp.Header.Get("X-RateLimit-Reset"))
+}
+

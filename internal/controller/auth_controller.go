@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"strings"
 	"url_shortener/internal/helper/request"
 	"url_shortener/internal/helper/response"
 	"url_shortener/internal/model/web"
@@ -18,6 +19,7 @@ type AuthController interface {
 	Register(c fiber.Ctx) error
 	Login(c fiber.Ctx) error
 	GetProfile(c fiber.Ctx) error
+	Logout(c fiber.Ctx) error
 }
 
 type authControllerImpl struct {
@@ -77,4 +79,26 @@ func (ctrl *authControllerImpl) GetProfile(c fiber.Ctx) error {
 	}
 
 	return response.SuccessResponse(c, http.StatusOK, res)
+}
+
+// Logout handles POST /api/v1/auth/logout
+func (ctrl *authControllerImpl) Logout(c fiber.Ctx) error {
+	tokenStr, _ := c.Locals("token_string").(string)
+	if tokenStr == "" {
+		authHeader := c.Get("Authorization")
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			tokenStr = strings.TrimSpace(parts[1])
+		}
+	}
+
+	if tokenStr == "" {
+		return errs.NewUnauthorizedError("missing authorization token")
+	}
+
+	if err := ctrl.authService.Logout(c.Context(), tokenStr); err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, http.StatusOK, nil, "Logged out successfully")
 }
